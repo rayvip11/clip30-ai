@@ -39,11 +39,104 @@ function safeName(name) {
   return (name || 'video').replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'video';
 }
 
+
+// Analisis lokal sederhana: membandingkan sampel frame untuk mencari perubahan adegan.
+// Ini bukan pemahaman semantik AI, tetapi tidak membutuhkan API atau biaya tambahan.
+async function findInterestingStarts(file, clipLength, duration, onProgress = () => {}) {
+  const url = URL.createObjectURL(file);
+  const video = document.createElement('video');
+  video.muted = true;
+  video.preload = 'auto';
+  video.playsInline = true;
+  video.src = url;
+
+  try {
+    await new Promise((resolve, reject) => {
+      video.onloadedmetadata = resolve;
+      video.onerror = () => reject(new Error('Browser tidak dapat membaca video untuk analisis momen.'));
+    });
+
+    const actualDuration = Number.isFinite(video.duration) ? video.duration : duration;
+    const sampleStep = 1.5;
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 18;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) throw new Error('Browser tidak mendukung analisis frame pada perangkat ini.');
+
+    const samples = [];
+    for (let t = 0; t < actualDuration; t += sampleStep) {
+      const targetTime = Math.min(t, Math.max(0, actualDuration - 0.05));
+      if (Math.abs(video.currentTime - targetTime) > 0.01) {
+        await new Promise((resolve, reject) => {
+          let timeoutId;
+          const done = () => {
+            clearTimeout(timeoutId);
+            resolve();
+          };
+          video.addEventListener('seeked', done, { once: true });
+          timeoutId = setTimeout(() => {
+            video.removeEventListener('seeked', done);
+            reject(new Error('Analisis frame terlalu lama. Coba video yang lebih kecil.'));
+          }, 8000);
+          video.currentTime = targetTime;
+        });
+      }
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      const gray = new Uint8Array(canvas.width * canvas.height);
+      for (let i = 0, j = 0; i < pixels.length; i += 4, j++) {
+        gray[j] = Math.round((pixels[i] * 0.299) + (pixels[i + 1] * 0.587) + (pixels[i + 2] * 0.114));
+      }
+      samples.push({ time: t, gray });
+      onProgress(Math.min(25, Math.round(((t + sampleStep) / actualDuration) * 25)));
+    }
+
+    if (samples.length < 2 || actualDuration <= clipLength) return [0];
+
+    const changes = samples.map((sample, index) => {
+      if (index === 0) return { time: sample.time, score: 0 };
+      const prev = samples[index - 1].gray;
+      let total = 0;
+      for (let i = 0; i < prev.length; i++) total += Math.abs(sample.gray[i] - prev[i]);
+      return { time: sample.time, score: total / (prev.length * 255) };
+    });
+
+    const maxStart = Math.max(0, actualDuration - clipLength);
+    const step = 1.5;
+    const candidates = [];
+    for (let start = 0; start <= maxStart; start += step) {
+      const end = start + clipLength;
+      const inside = changes.filter((change) => change.time >= start && change.time <= end);
+      const sum = inside.reduce((acc, item) => acc + item.score, 0);
+      const average = inside.length ? sum / inside.length : 0;
+      candidates.push({ start, score: sum + average });
+    }
+    candidates.sort((a, b) => b.score - a.score);
+
+    const targetCount = Math.max(1, Math.ceil(actualDuration / clipLength));
+    const selected = [];
+    for (const candidate of candidates) {
+      if (selected.every((start) => Math.abs(start - candidate.start) >= clipLength * 0.65)) {
+        selected.push(candidate.start);
+      }
+      if (selected.length >= targetCount) break;
+    }
+    if (!selected.length) selected.push(0);
+    return selected.sort((a, b) => a - b);
+  } finally {
+    video.removeAttribute('src');
+    video.load();
+    URL.revokeObjectURL(url);
+  }
+}
+
 export default function App() {
   const ffmpegRef = useRef(null);
   const objectUrlsRef = useRef([]);
   const [file, setFile] = useState(null);
   const [duration, setDuration] = useState('30');
+  const [clipMode, setClipMode] = useState('sequential');
   const [ratio, setRatio] = useState('original');
   const [quality, setQuality] = useState('source');
   const [busy, setBusy] = useState(false);
@@ -164,9 +257,19 @@ export default function App() {
 
       const clipLength = Number(duration);
       const totalDuration = videoInfo?.duration || clipLength;
-      const starts = [];
-      for (let start = 0; start < totalDuration; start += clipLength) {
-        if (start + 0.05 < totalDuration) starts.push(start);
+      let starts = [];
+
+      if (clipMode === 'auto') {
+        setStatus('Menganalisis perubahan adegan untuk mencari momen…');
+        addLog('Mode momen otomatis: analisis perubahan visual di browser, tanpa API.');
+        starts = await findInterestingStarts(file, clipLength, totalDuration, (value) => {
+          setProgress(value);
+        });
+        addLog(`Analisis selesai. Kandidat waktu mulai: ${starts.map((value) => value.toFixed(1)).join(', ')} detik.`);
+      } else {
+        for (let start = 0; start < totalDuration; start += clipLength) {
+          if (start + 0.05 < totalDuration) starts.push(start);
+        }
       }
       if (!starts.length) starts.push(0);
 
@@ -205,7 +308,7 @@ export default function App() {
       await ffmpeg.deleteFile(inputName).catch(() => {});
       setResults(generated);
       setProgress(100);
-      setStatus(`Selesai! ${generated.length} klip berhasil dibuat.`);
+      setStatus(`Selesai! ${generated.length} klip berhasil dibuat${clipMode === 'auto' ? ' dari pilihan momen otomatis' : ''}.`);
       addLog(`Selesai. Total klip: ${generated.length}.`);
     } catch (e) {
       const detail = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
@@ -262,6 +365,14 @@ export default function App() {
 
         <section style={styles.panel}>
           <label style={styles.label}>2. Pengaturan klip</label>
+          <div style={{ marginBottom: 14 }}>
+            <label style={styles.label} htmlFor="clip-mode">Mode pemotongan</label>
+            <select id="clip-mode" style={styles.select} value={clipMode} onChange={(e) => setClipMode(e.target.value)} disabled={busy}>
+              <option value="sequential">Berurutan dari awal video</option>
+              <option value="auto">Cari momen otomatis (beta, gratis)</option>
+            </select>
+            {clipMode === 'auto' && <p style={styles.muted}>Menganalisis perubahan gambar untuk memilih bagian yang paling dinamis. Ini bukan AI yang memahami isi video; hasil terbaik tetap perlu diperiksa.</p>}
+          </div>
           <div style={styles.row}>
             <div>
               <label style={styles.label} htmlFor="clip-duration">Durasi klip</label>
@@ -290,7 +401,7 @@ export default function App() {
               </select>
             </div>
           </div>
-          <p style={styles.muted}>Klip dibuat berurutan dari awal video. Jika durasi video tidak habis dibagi durasi klip, klip terakhir bisa lebih pendek.</p>
+          <p style={styles.muted}>Mode berurutan memotong dari awal video. Mode momen otomatis memilih bagian dengan perubahan visual yang lebih banyak; hasilnya bisa perlu ditinjau.</p>
         </section>
 
         <section style={styles.panel}>
