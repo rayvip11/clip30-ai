@@ -106,24 +106,37 @@ async function findInterestingStarts(file, clipLength, duration, onProgress = ()
     const step = 1.5;
     const candidates = [];
     for (let start = 0; start <= maxStart; start += step) {
-      const end = start + clipLength;
+      const end = Math.min(actualDuration, start + clipLength);
       const inside = changes.filter((change) => change.time >= start && change.time <= end);
       const sum = inside.reduce((acc, item) => acc + item.score, 0);
       const average = inside.length ? sum / inside.length : 0;
-      candidates.push({ start, score: sum + average });
+      candidates.push({ start, score: average + (sum / Math.max(1, inside.length)) });
     }
-    candidates.sort((a, b) => b.score - a.score);
 
+    // Divide the whole video into time regions and select the strongest candidate per region.
+    // This prevents all selected clips from clustering near the beginning.
     const targetCount = Math.max(1, Math.ceil(actualDuration / clipLength));
+    const regionCount = targetCount;
     const selected = [];
-    for (const candidate of candidates) {
-      if (selected.every((start) => Math.abs(start - candidate.start) >= clipLength * 0.65)) {
-        selected.push(candidate.start);
-      }
-      if (selected.length >= targetCount) break;
+    for (let region = 0; region < regionCount; region++) {
+      const regionStart = (actualDuration * region) / regionCount;
+      const regionEnd = (actualDuration * (region + 1)) / regionCount;
+      const regionCandidates = candidates.filter((candidate) =>
+        candidate.start >= regionStart &&
+        (candidate.start < regionEnd || region === regionCount - 1)
+      );
+      regionCandidates.sort((a, b) => b.score - a.score);
+      if (regionCandidates.length) selected.push(regionCandidates[0].start);
     }
-    if (!selected.length) selected.push(0);
-    return selected.sort((a, b) => a - b);
+
+    const unique = [];
+    for (const start of selected.sort((a, b) => a - b)) {
+      if (unique.every((existing) => Math.abs(existing - start) >= Math.min(clipLength * 0.5, 5))) {
+        unique.push(start);
+      }
+    }
+    if (!unique.length) unique.push(0);
+    return unique;
   } finally {
     video.removeAttribute('src');
     video.load();
