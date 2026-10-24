@@ -137,6 +137,7 @@ export default function App() {
   const [file, setFile] = useState(null);
   const [duration, setDuration] = useState('30');
   const [clipMode, setClipMode] = useState('sequential');
+  const [aiEnabled, setAiEnabled] = useState(false);
   const [ratio, setRatio] = useState('original');
   const [quality, setQuality] = useState('source');
   const [busy, setBusy] = useState(false);
@@ -365,13 +366,39 @@ export default function App() {
 
         <section style={styles.panel}>
           <label style={styles.label}>2. Pengaturan klip</label>
-          <div style={{ marginBottom: 14 }}>
-            <label style={styles.label} htmlFor="clip-mode">Mode pemotongan</label>
-            <select id="clip-mode" style={styles.select} value={clipMode} onChange={(e) => setClipMode(e.target.value)} disabled={busy}>
-              <option value="sequential">Berurutan dari awal video</option>
-              <option value="auto">Cari momen otomatis (beta, gratis)</option>
-            </select>
-            {clipMode === 'auto' && <p style={styles.muted}>Menganalisis perubahan gambar untuk memilih bagian yang paling dinamis. Ini bukan AI yang memahami isi video; hasil terbaik tetap perlu diperiksa.</p>}
+          <div style={{ marginBottom: 14, padding: 14, borderRadius: 12, border: '1px solid #394765', background: '#0d1426' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ ...styles.label, marginBottom: 4 }} htmlFor="ai-toggle">Fitur AI / momen otomatis</label>
+                <div style={styles.muted}>{aiEnabled ? 'Aktif — aplikasi akan menganalisis perubahan visual.' : 'Nonaktif — video dipotong berurutan sesuai durasi.'}</div>
+              </div>
+              <button
+                id="ai-toggle"
+                type="button"
+                role="switch"
+                aria-checked={aiEnabled}
+                onClick={() => {
+                  const next = !aiEnabled;
+                  setAiEnabled(next);
+                  setClipMode(next ? 'auto' : 'sequential');
+                }}
+                disabled={busy}
+                style={{
+                  flexShrink: 0,
+                  minWidth: 88,
+                  border: '1px solid #52607f',
+                  borderRadius: 999,
+                  padding: '9px 12px',
+                  background: aiEnabled ? '#267b56' : '#26324d',
+                  color: '#fff',
+                  fontWeight: 800,
+                  cursor: busy ? 'not-allowed' : 'pointer'
+                }}
+              >
+                {aiEnabled ? 'ON' : 'OFF'}
+              </button>
+            </div>
+            {aiEnabled && <p style={{ ...styles.muted, marginBottom: 0, marginTop: 10 }}>Mode beta: mendeteksi perubahan gambar untuk memilih bagian yang lebih dinamis. Ini belum memahami isi adegan seperti model AI multimodal.</p>}
           </div>
           <div style={styles.row}>
             <div>
@@ -401,7 +428,7 @@ export default function App() {
               </select>
             </div>
           </div>
-          <p style={styles.muted}>Mode berurutan memotong dari awal video. Mode momen otomatis memilih bagian dengan perubahan visual yang lebih banyak; hasilnya bisa perlu ditinjau.</p>
+          <p style={styles.muted}>AI bisa diaktifkan atau dinonaktifkan kapan saja sebelum pemrosesan. Saat OFF, klip dipotong berurutan; saat ON, aplikasi menganalisis perubahan visual untuk memilih momen yang lebih dinamis.</p>
         </section>
 
         <section style={styles.panel}>
