@@ -3,7 +3,7 @@ import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import JSZip from 'jszip';
 
-const CORE_BASE = 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd';
+const CORE_BASE = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
 
 const styles = {
   page: { minHeight: '100vh', background: '#0b1020', color: '#f5f7ff', padding: '24px 14px 40px', fontFamily: 'system-ui, -apple-system, Segoe UI, sans-serif' },
