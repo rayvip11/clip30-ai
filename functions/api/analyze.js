@@ -71,7 +71,7 @@ export async function onRequestPost({ request, env }) {
       },
       body: JSON.stringify({
         model: MODEL,
-        input: [{ role: "user", content }],
+        input: [{ type: "user_input", content }],
         generation_config: { thinking_level: "low", max_output_tokens: 4096 },
         store: false,
       }),
